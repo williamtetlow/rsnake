@@ -1,7 +1,8 @@
-use std::{collections::LinkedList, io, sync::mpsc, time::Duration};
+use anyhow::{anyhow, Result};
+use std::{collections::LinkedList, io, time::Duration};
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -9,9 +10,9 @@ use crossterm::{
 use rand::Rng;
 use tui::{
     backend::CrosstermBackend,
-    layout::{self, Constraint, Layout, Rect},
-    style::{Color, Style},
-    widgets::{self, Block, Borders, Widget},
+    layout::Rect,
+    style::Color,
+    widgets::{Block, Borders, Widget},
     Terminal,
 };
 
@@ -22,39 +23,8 @@ impl Vector {
     fn new(x: u16, y: u16) -> Vector {
         Vector(x, y)
     }
-
-    fn move_left(&mut self, dimensions: &Dimensions) {
-        if self.0 > dimensions.x.0 {
-            self.0 -= 1;
-        } else {
-            self.0 = dimensions.x.1;
-        }
-    }
-
-    fn move_right(&mut self, dimensions: &Dimensions) {
-        if self.0 < dimensions.x.1 {
-            self.0 += 1;
-        } else {
-            self.0 = dimensions.x.0;
-        }
-    }
-
-    fn move_up(&mut self, dimensions: &Dimensions) {
-        if self.1 > dimensions.y.0 {
-            self.1 -= 1;
-        } else {
-            self.1 = dimensions.y.1;
-        }
-    }
-
-    fn move_down(&mut self, dimensions: &Dimensions) {
-        if self.1 < dimensions.y.1 {
-            self.1 += 1;
-        } else {
-            self.1 = dimensions.y.0;
-        }
-    }
 }
+
 struct Dimensions {
     x: (u16, u16),
     y: (u16, u16),
@@ -98,15 +68,19 @@ struct Game {
 }
 
 impl Game {
-    fn go_forward(&mut self) {
+    fn go_forward(&mut self) -> Result<()> {
         if let Some(head) = self.body.front() {
             let mut new_head = head.clone();
 
             match &self.direction {
-                Direction::Right => new_head.move_right(&self.dimensions),
-                Direction::Left => new_head.move_left(&self.dimensions),
-                Direction::Up => new_head.move_up(&self.dimensions),
-                Direction::Down => new_head.move_down(&self.dimensions),
+                Direction::Right => self.move_vec_right(&mut new_head),
+                Direction::Left => self.move_vec_left(&mut new_head),
+                Direction::Up => self.move_vec_up(&mut new_head),
+                Direction::Down => self.move_vec_down(&mut new_head),
+            }
+
+            if self.vec_intersects_with_body(&new_head) {
+                return Err(anyhow!("game over :("));
             }
 
             let mut pop_back = true;
@@ -123,22 +97,51 @@ impl Game {
             if pop_back {
                 self.body.pop_back();
             }
+
+            Ok(())
+        } else {
+            Err(anyhow!("empty body"))
         }
     }
 
-    fn extend_body(&mut self) {
-        if let Some(tail) = self.body.back() {
-            let mut new_tail = tail.clone();
-
-            match &self.direction {
-                Direction::Right => new_tail.move_left(&self.dimensions),
-                Direction::Left => new_tail.move_right(&self.dimensions),
-                Direction::Up => new_tail.move_down(&self.dimensions),
-                Direction::Down => new_tail.move_up(&self.dimensions),
+    fn vec_intersects_with_body(&self, vec: &Vector) -> bool {
+        for block in &self.body {
+            if *block == *vec {
+                return true;
             }
-            self.body.push_back(new_tail);
+        }
+        return false;
+    }
+
+    fn move_vec_left(&mut self, vec: &mut Vector) {
+        if vec.0 > self.dimensions.x.0 {
+            vec.0 -= 1;
         } else {
-            self.body.push_back(Vector::new(0, 0));
+            vec.0 = self.dimensions.x.1;
+        }
+    }
+
+    fn move_vec_right(&mut self, vec: &mut Vector) {
+        if vec.0 < self.dimensions.x.1 {
+            vec.0 += 1;
+        } else {
+            vec.0 = self.dimensions.x.0;
+        }
+    }
+
+    fn move_vec_up(&mut self, vec: &mut Vector) {
+        if vec.1 > self.dimensions.y.0 {
+            vec.1 -= 1;
+        } else {
+            vec.1 = self.dimensions.y.1;
+        }
+    }
+
+    fn move_vec_down(&mut self, vec: &mut Vector) {
+        if vec.1 < self.dimensions.y.1 {
+            vec.1 += 1;
+        } else {
+            vec.1 = self.dimensions.y.0;
         }
     }
 }
@@ -188,7 +191,9 @@ fn main() -> Result<(), io::Error> {
             }
         })?;
 
-        game.go_forward();
+        if let Err(_) = game.go_forward() {
+            break;
+        }
 
         if game.block.is_none() {
             game.block = Some(Vector::new(
